@@ -8,6 +8,8 @@
 \usepackage{graphicx}
 \usepackage{listings}
 
+\usepackage[margin=3cm]{geometry}
+
 \author{Per Lenander, Anton Fosselius}
 \title{ORSoC Graphics accelerator Specification}
 \begin{document}
@@ -28,7 +30,8 @@
 \begin{tabular}{|p{1cm}|p{2cm}|p{3cm}|p{7cm}|}
 \hline \textbf{Rev.} & \textbf{Date} & \textbf{Author} & \textbf{Description} \\
 \hline 
-\hline 0.1.0 & 23/3/2012 & Per Lenander & Initial draft \\
+\hline 1.0 & 23/3/2012 & Per Lenander & Initial draft and basic functionality \\
+\hline 2.0 & 4/6/2012 & Per Lenander & Advanced functionality (vector, 3D etc) \\
 \hline 
 \end{tabular} 
 \newpage
@@ -60,13 +63,13 @@ This IP Core is designed to integrate with the OpenRISC processor through a Wish
 \item Interpolation of colors  
 \item UV-Mapping
 \item Transformation (scaling and rotation)
-\item 3D model support (3d degree .obj)
-\item Z-Buffer (triangles drawn in order of appearance)
-\item Requires ~10000 Slice LUTs (Xilinx ISE 13.4)
+\item 3D model support (.obj model files built using 3rd degree polygons)
+\item Z-Buffer (triangles drawn in depth order)
+\item Requires around 10000 Slice LUTs (Xilinx ISE 13.4)
 \end{itemize}
 
 \subsection{IP Core directory structure}
-A basic overview of the contents of the IP core source folder can be found in figure \ref{fig:directory}. The \textbf{rtl} folder also contains files for implementing the component in ORPSoCv2.
+A overview of the contents of the IP core source folder can be found in figure \ref{fig:directory}.
 
 \begin{figure}
 \begin{center}
@@ -78,7 +81,7 @@ A basic overview of the contents of the IP core source folder can be found in fi
 
 \section{Architecture}
 \subsection{Overview}
-A topology of how the orgfx is connected to the VGA driver and the OpenRisc core is shown in figure \ref{fig:topology}. The orgfx has three wishbone interfaces: one read/write port that is used to communicate with the host CPU. One read port that reads texture/alpha blending information from the RAM and one write port to write pixel information to the RAM.
+A topology of how the ORGFX is connected to the VGA driver and the OpenRISC core is shown in figure \ref{fig:topology}. The ORGFX has three wishbone interfaces: one read/write port that is used to communicate with the host CPU. One read port that reads depth/texture/alpha blending information from the RAM and one write port to write pixel information to the RAM.
 
 \begin{figure}
 \begin{center}
@@ -91,11 +94,11 @@ A topology of how the orgfx is connected to the VGA driver and the OpenRisc core
 \subsection{Concepts}
 This section describes a few basic terms used in this document.
 
-\textbf{Video memory} -- The orgfx component writes pixels one by one to an external memory, usually a SDRAM or DDR RAM chip. The CPU should also have access to this memory space to be able to write pixels directly (the easiest way to load textures).
+\textbf{Video memory} -- The ORGFX component writes pixels one by one to an external memory, usually a SDRAM or DDR RAM chip. The CPU should also have access to this memory space to be able to write pixels directly (the easiest way to load textures).
 
 \textbf{Render target} -- The render target, defined by the target base and size registers, describes the area to which all operations render pixels. It is possible to change the base address and size, enabling render-to-texture and double buffering.
 
-\textbf{Surface/Texture} -- Any memory area that can be rendered to, including the render target, is considered a surface. A surface is defined by it's base address and size. There are two main surfaces that the orgfx device handles: the render target and the currently active texture. Swapping between different textures has to be done in software. The operation of setting the current render target or texture is referred to as \textit{binding}.
+\textbf{Surface/Texture} -- Any memory area that can be rendered to, including the render target, is considered a surface. A surface is defined by it's base address and size. There are two main surfaces that the ORGFX device handles: the render target and the currently active texture. Swapping between different textures has to be done in software. The operation of setting the current render target or texture is referred to as \textit{binding}.
 
 \textbf{Source, Destination and Clip rectangles} -- There are three sets of rectangles that affect rendering, each described by two points. The first point sets the beginning of the rectangle, while the second point sets the pixel after the end of the rectangle. This way, a rectangle exactly filling the screen would be (0,0,640,480) at 640x480 resolution. See figure \ref{fig:SrcClipDest};
 
@@ -104,6 +107,8 @@ This section describes a few basic terms used in this document.
 \textbf{Destination rectangle} -- The destination rectangle defines where operations such as draw pixel and draw line will draw pixels, in the coordinates of the render target.
 
 \textbf{Clip rectangle} -- The clip rectangle defines an area within the current render target which is valid to draw to. Any pixels outside this rectangle are discarded in the rasterization step. Pixels outside of the render target are automatically discarded.
+
+\textbf{Z-buffer} -- The depth or Z-buffer is a surface containing z coordinate information. This can be used to draw graphics primitives in depth-correct order.
 
 \begin{figure}
 \begin{center}
@@ -114,7 +119,7 @@ This section describes a few basic terms used in this document.
 \end{figure}
 
 \subsection{Coordinate precision}
-The orgfx core supports variable coordinate precision through two parameters, \textbf{point\_width} and \textbf{subpixel\_width}. Both parameters defaults to 16 bits width.
+The ORGFX core supports variable coordinate precision through two parameters, \textbf{point\_width} and \textbf{subpixel\_width}. Both parameters defaults to 16 bits width.
 
 Target size, clip and source rects are defined as \textbf{point\_width} bit integers. Destination points are defined as fixed point numbers, with \textbf{point\_width} bit integer precision and \textbf{subpixel\_width} fractional precision. Internally many calculations are done with fixed point logic.
 
@@ -122,7 +127,7 @@ Target size, clip and source rects are defined as \textbf{point\_width} bit inte
 All wishbone writes sent to the slave interface will pass through an instruction fifo. If the device is in the busy state (when the pipeline is active) the instruction will be queued instead of being set immediately. This is important to take into account when reading from registers, since an operation that changes the register being read might be queued. To find out if the device is busy, poll the status register and check if the busy bit is high.
 
 \subsection{Pipeline}
-The orgfx core uses a pipelined architecture to speed up operation. An overview of the pipeline can be seen in figure \ref{fig:pipeline}. Each module in the pipeline communicates with acknowledge and write signals. A module will not assert write to the next module unless it receives an ack first (or if the module was previously in a ready state, in which case the downstream pipeline is empty). All ack and write signals are always exactly one clock tick long, to prevent triggering multiple instances of the same instruction.
+The ORGFX core uses a pipelined architecture to speed up operation. An overview of the pipeline can be seen in figure \ref{fig:pipeline}. Each module in the pipeline communicates with acknowledge and write signals. A module will not assert write to the next module unless it receives an ack first (or if the module was previously in a ready state, in which case the downstream pipeline is empty). All ack and write signals are always exactly one clock tick long, to prevent triggering multiple instances of the same instruction.
 
 Each module in the pipeline may hold the upstream pipeline for several clock ticks. For example, the rasterizer will prevent incoming raster instructions until all the pixels for the current operation are generated. When the rasterizer is ready for new data, it will send an ack upstream.
 
@@ -131,7 +136,7 @@ Each module in the pipeline may hold the upstream pipeline for several clock tic
 \begin{figure}
 \begin{center}
 \includegraphics[scale=0.35]{../pictures/pipeline}
-\caption{Picture of the orgfx pipeline}
+\caption{Picture of the ORGFX pipeline}
 \label{fig:pipeline}
 \end{center}
 \end{figure}
@@ -139,13 +144,10 @@ Each module in the pipeline may hold the upstream pipeline for several clock tic
 \subsection{Description of core modules}
 
 \subsubsection{Wishbone slave}
-The wishbone slave handles all communication from the main OpenRISC processor (or other master cpu). This component holds all the registers, and the instruction fifo that sets them. This component can be in one of two states: \textit{busy} or \textit{wait}. It enters the busy state when a pipeline operation is initialized, and returns to the wait state when the operation is finished.
+The wishbone slave handles all communication from the main OpenRISC processor (or other master CPU). This component holds all the registers, and the instruction FIFO that sets them. This component can be in one of two states: \textit{busy} or \textit{wait}. It enters the busy state when a pipeline operation is initialized, and returns to the wait state when the operation is finished. Operations can be initialized by writing to the control register (see section \ref{sec:registers}).
 
 \subsubsection{Transformation processor}
 The transformation processor handles rotations and scaling.
-
-\subsubsection{Vector processor}
-This module generates the B\'{e}zier curve and can be skipped if no vector graphics is drawn.
 
 \subsubsection{Rasterizer}
 This rasterizer generates pixel coordinates from points for several different operations.
@@ -191,6 +193,7 @@ The Core has three wishbone interfaces:
 There is an interrupt enabled that can be connected to the interrupt pins on the or1200 CPU (in the supplied orpsoc\_top it is connected to or1200\_pic\_ints[9]). For this interrupt to trigger, the correct bits in the control register has to be set.
 
 \section{Registers}
+\label{sec:registers}
 \begin{tabular}{|l|l|l|l|l|}
 \hline \textbf{Name} & \textbf{Addr} & \textbf{Width} & \textbf{Access} & \textbf{Description} \\ 
 \hline
@@ -299,7 +302,7 @@ The active point is defined as follows:
 \hline 00 & p0 \\
 \hline 01 & p1 \\
 \hline 10 & p2 \\
-\hline 11 & p3 \\
+\hline 11 & - \\
 \hline 
 \end{tabular} \\
 
@@ -309,7 +312,7 @@ The operations \textbf{Forward point} and \textbf{Transform point} reads the cur
 \begin{tabular}{|l|l|l|}
 \hline \textbf{Bit \#} & \textbf{Access} & \textbf{Description} \\ 
 \hline
-\hline [31:16] & R & FIFO size \\
+\hline [31:16] & R & Current FIFO size \\
 \hline [15:1]  & R & Reserved \\
 \hline [0]     & R & Busy pin (high when busy) \\
 \hline 
@@ -574,7 +577,7 @@ $
 \\\\
 \textbf{Default value:} 0x00
 
-There are several color modes available (set in \textit{video mode register}):
+There are several color modes available (set in \textit{control register}):
 
 \begin{tabular}{|l|l|l|}
 \hline \textbf{Mode} & \textbf{Format} \\ 
@@ -588,35 +591,56 @@ There are several color modes available (set in \textit{video mode register}):
 \end{tabular}
 \\\\
 
+Currently only 16 bit color depth is fully supported.
+
+\subsection{Texture coordinate Registers (U0-2 and V0-2)}
+\begin{tabular}{|l|l|l|}
+\hline \textbf{Bit \#} & \textbf{Access} & \textbf{Description} \\ 
+\hline
+\hline [31:0] & RW & Coordinate bits (integer) \\
+\hline 
+\end{tabular}
+\\\\
+\textbf{Default value:} 0x00
+
+\subsection{Depth buffer Register (ZBUFFER\_BASE)}
+\begin{tabular}{|l|l|l|}
+\hline \textbf{Bit \#} & \textbf{Access} & \textbf{Description} \\ 
+\hline
+\hline [31:2] & RW & 32-bit word base address \\
+\hline [1:0] & - & Ignored \\
+\hline 
+\end{tabular}
+\\\\
+\textbf{Default value:} 0x00
+
+This register holds the base address of the depth buffer. The depth buffer operations uses TARGET\_SIZE\_X and TARGET\_SIZE\_Y for the size of the depth buffer (it is assumed that the render target and the depth buffer are of the same size.
+
 \section{Operation}
 All hardware accelerated operations draw pixels to the currently active surface (defined by TADR\_REG and TSZE\_REG). These operations are all affected by clip\_p0 and clip\_p1. No pixels that fall outside the clipping rectangle will be rendered.
 
 \subsection{Draw pixel}
-\textbf{Input needed:} dest\_p0, color\\
-Orgfx have no hardware-support for writing a single pixel to the video memory. However its possible to draw a line, rect or curve with the size of one pixel. The software API makes it possible to draw a pixel by writing directly to the memory (this is the most optimal way). Since the video memory can point to both the framebuffer and to textures, the same operation can be used to draw an arbitrary pixel to the screen and to load a texture into video memory.
+\textbf{Input needed:} dest\_p0, color0\\
+ORGFX have no hardware-support for writing a single pixel to the video memory. However its possible to draw a line, rect or curve with the size of one pixel. The software API makes it possible to draw a pixel by writing directly to the memory (this is the most optimal way). Since the video memory can point to both the framebuffer and to textures, the same operation can be used to draw an arbitrary pixel to the screen and to load a texture into video memory.
 
 \subsection{Fill rect}
-\textbf{Input needed:} ctrl, dest\_p0, dest\_p1, color, [src\_p0, src\_p1]\\
+\textbf{Input needed:} ctrl, dest\_p0, dest\_p1, color0, [src\_p0, src\_p1]\\
 Fill rect will fill the area of a rectangle created between the pixel dest\_p0 and  dest\_p1 with color. If texturing is enabled, color will be taken from the active texture in the area between src\_p0 and src\_p1. This operation is hardware accelerated, and is activated by setting the Rect write bit in the control register.
 
 \subsection{Line}
-\textbf{Input needed:} dest\_p0, dest\_p1, color\\
+\textbf{Input needed:} ctrl, dest\_p0, dest\_p1, color0\\
 Line will draw a line between the pixels dest\_p0 and dest\_p1 with color. This operation is hardware accelerated.
 
-\subsection{Fill triangle}
-\textbf{Input needed:} ctrl, dest\_p0, dest\_p1, dest\_p2, color, [src\_p0, src\_p1]\\
-Draw the pixels in the triangle created by dest\_p0, dest\_p1 and dest\_p2.
+\subsection{Triangle}
+\textbf{Input needed:} ctrl, dest\_p0, dest\_p1, dest\_p2, color0, [color1, color2, u0, v0, u1, v1, u2, v2]\\
+Draw the pixels in the triangle created by dest\_p0, dest\_p1 and dest\_p2. The triangle can be colored with either a flat color, a gradient or a texture. Gradient or textured coloring require the interpolation pin to be set in the control register.
 
 \subsection{Curve}
-\textbf{Input needed:} ctrl, dest\_p0, dest\_p1, dest\_p2, dest\_p3, color, [src\_p0, src\_p1]\\
-Draws a cubic b\'{e}zier curve. for a quadratic b\'{e}zier curve, use the same value for dest\_p1 and dest\_p2.
-
-\subsection{Fill curve}
-\textbf{Input needed:} ctrl, dest\_p0, dest\_p1, dest\_p2, dest\_p3, color, [src\_p0, src\_p1]\\
-Draws a filled cubic b\'{e}zier curve. for a filled quadratic b\'{e}zier curve, use the same value for dest\_p1 and dest\_p2.
+\textbf{Input needed:} ctrl, dest\_p0, dest\_p1, dest\_p2, color0, [color1, color2, u0, v0, u1, v1, u2, v2]\\
+Draws a filled quadratic B\'{e}zier curve with dest\_p0 as start, dest\_p1 as control point and dest\_p2 as end. For this operation to work, the interpolation pin must be set in the control register.
 
 \section{Clocks}
-The wishbone slave uses the system wishbone bus clock at 50 Mhz, while the rest of the pipeline and the wishbone interfaces to the memory runs at 100Mhz.
+The entire component uses the same clock domain.
 
 \section{Driver interface}
 The ORSoC graphics accelerator offers three different APIs to code against, two for bare metal when coding directly against the processor, and a Linux kernel module. The extended bare metal interface is a wrapper around the basic bare metal API, and makes coding easier by reducing the number of calls. The drawback is lesser control over the graphics card.
@@ -707,8 +731,8 @@ inline void orgfx_srcrect(unsigned int x0,
 \subsubsection{orgfx\_set\_pixel}
 \textbf{Description:} Set a pixel on coordinate x,y to color. This is done in software by direct memory writes. This operation is not affected by the clipping rect!
 \begin{lstlisting}
-inline void orgfx_set_pixel(unsigned int x, 
-                            unsigned int y, 
+inline void orgfx_set_pixel(int x, 
+                            int y, 
                             unsigned int color);
 \end{lstlisting}
 
@@ -720,66 +744,75 @@ void orgfx_memcpy(unsigned int mem[],
 \end{lstlisting}
 
 \subsubsection{orgfx\_set\_color}
-\textbf{Description:} Sets the current drawing color.
+\textbf{Description:} Sets the current drawing color (for flat coloring).
 \begin{lstlisting}
 inline void orgfx_set_color(unsigned int color);
+\end{lstlisting}
+
+\subsubsection{orgfx\_set\_colors}
+\textbf{Description:} Sets all the current drawing colors (for gradient coloring).
+\begin{lstlisting}
+inline void orgfx_set_colors(unsigned int color0,
+                             unsigned int color1,
+                             unsigned int color2);
 \end{lstlisting}
 
 \subsubsection{orgfx\_rect}
 \textbf{Description:} Draws a rect from (x0,y0) to (x1,y1) and fills it with the current drawing color. If texturing is enabled, the current texture will be drawn instead.
 \begin{lstlisting}
-inline void orgfx_rect(unsigned int x0, 
-                       unsigned int y0, 
-                       unsigned int x1, 
-                       unsigned int y1);
+inline void orgfx_rect(int x0, 
+                       int y0, 
+                       int x1, 
+                       int y1);
 \end{lstlisting}
 
 \subsubsection{orgfx\_line}
 \textbf{Description:} Draws a line from (x0,y0) to (x1,y1) with the current drawing color. If texturing is enabled, the first pixel of the current texture will be drawn instead.
 \begin{lstlisting}
-inline void orgfx_line(unsigned int x0, 
-                       unsigned int y0, 
-                       unsigned int x1, 
-                       unsigned int y1);
+inline void orgfx_line(int x0, int y0, 
+                       int x1, int y1);
+\end{lstlisting}
+
+\subsubsection{orgfx\_line3d}
+\textbf{Description:} Draws a line from (x0,y0,z0) to (x1,y1,z1) with the current drawing color. If texturing is enabled, the first pixel of the current texture will be drawn instead.
+\begin{lstlisting}
+inline void orgfx_line3d(int x0, int y0, int z0,
+                         int x1, int y1, int z1);
 \end{lstlisting}
 
 \subsubsection{orgfx\_triangle}
 \textbf{Description:} Draws a filled triangle of the space spanned by (x0,y0), (x1,y1) and (x2,y2). The order of the points is important, since triangles calculated to be counter clockwise will be discarded (backface culling). The interpolate flag indicates if flat coloring or interpolated coloring should be used. The interpolate flag \textit{has} to be enabled for interpolated alpha, texture coordinates or depth is desired (flat coloring can be obtained by setting all three color registers to the same color).
 \begin{lstlisting}
-inline void orgfx_triangle(unsigned int x0, 
-                           unsigned int y0, 
-                           unsigned int x1, 
-                           unsigned int y1, 
-                           unsigned int x2, 
-                           unsigned int y2,
+inline void orgfx_triangle(int x0, int y0, 
+                           int x1, int y1, 
+                           int x2, int y2,
                            unsigned int interpolate);
 \end{lstlisting}
 
 \subsubsection{orgfx\_triangle3d}
 \textbf{Description:} This function works the same way as the triangle function, but the Z-values are set.
 \begin{lstlisting}
-inline void orgfx_triangle3d(unsigned int x0, 
-                             unsigned int y0, 
-                             unsigned int z0, 
-                             unsigned int x1, 
-                             unsigned int y1, 
-                             unsigned int z1, 
-                             unsigned int x2, 
-                             unsigned int y2,
-                             unsigned int z2, 
+inline void orgfx_triangle3d(int x0, int y0, int z0, 
+                             int x1, int y1, int z1, 
+                             int x2, int y2, int z2, 
                              unsigned int interpolate);
 \end{lstlisting}
 
 \subsubsection{orgfx\_curve}
 \textbf{Description:} Draws a Quadratic curve between the points (x0,y0) and (x2,y2) with the control points (x1,y1). The three points form a triangle. The \textit{inside} flag determines if the inside or outside of the curve is filled inside the triangle.
 \begin{lstlisting}
-inline void orgfx_curve(unsigned int x0, 
-                        unsigned int y0, 
-                        unsigned int x1, 
-                        unsigned int y1, 
-                        unsigned int x2, 
-                        unsigned int y2, 
+inline void orgfx_curve(int x0, int y0, 
+                        int x1, int y1, 
+                        int x2, int y2, 
                         unsigned int inside);
+\end{lstlisting}
+
+\subsubsection{orgfx\_uv}
+\textbf{Description:} Sets the three texture coordinates used in textured triangle renders.
+\begin{lstlisting}
+inline void orgfx_uv(unsigned int u0, unsigned int v0,
+                     unsigned int u1, unsigned int v1,
+                     unsigned int u2, unsigned int v2);
 \end{lstlisting}
 
 \subsubsection{orgfx\_enable\_tex0}
@@ -794,6 +827,23 @@ void orgfx_enable_tex0(unsigned int enable);
 void orgfx_bind_tex0(struct orgfx_surface* surface);
 \end{lstlisting}
 
+\subsubsection{orgfx\_enable\_zbuffer}
+\textbf{Description:} Enables or disables reads and writes to the depth buffer. Requires that a depth buffer is bound.
+\begin{lstlisting}
+void orgfx_enable_zbuffer(unsigned int enable);
+\end{lstlisting}
+
+\subsubsection{orgfx\_bind\_zbuffer}
+\textbf{Description:} Binds the depth buffer. This surface should have the same resolution as the render target.
+\begin{lstlisting}
+void orgfx_bind_zbuffer(struct orgfx_surface *surface);
+\end{lstlisting}
+
+\subsubsection{orgfx\_clear\_zbuffer}
+\textbf{Description:} Clears the depth buffer.
+\begin{lstlisting}
+void orgfx_clear_zbuffer();
+\end{lstlisting}
 
 \subsubsection{orgfx\_enable\_alpha}
 \textbf{Description:} Enables or disables alpha blending.
@@ -819,6 +869,20 @@ void orgfx_enable_colorkey(unsigned int enable);
 void orgfx_set_colorkey(unsigned int colorkey);
 \end{lstlisting}
 
+\subsubsection{orgfx\_enable\_transform}
+\textbf{Description:} Enables or disables hardware accelerated transformation of points.
+\begin{lstlisting}
+void orgfx_enable_transform(unsigned int enable);
+\end{lstlisting}
+
+\subsubsection{orgfx\_set\_transformation\_matrix}
+\textbf{Description:} Sets the 3 by 4 transformation matrix used in hardware.
+\begin{lstlisting}
+void orgfx_set_transformation_matrix(int aa, int ab, int ac, int tx,
+                                     int ba, int bb, int bc, int ty,
+                                     int ca, int cb, int cc, int tz);
+\end{lstlisting}                           
+
 \subsection{Extended newlib}
 The extended library is provided in \textbf{orgfx\_plus.h} and \textbf{orgfx\_plus.c}, but \textbf{orgfx.c} also has to be compiled for it to work.
 
@@ -826,13 +890,16 @@ Instead of using surface structs directly, the extended API hides surface manage
 
 The driver defines the number of available surfaces (not counting the screen) with a static define. Change this if the default value is too low for your application.
 
+There are no 3D functions in this API. For the more advanced 3D functionality (meshes, depth buffering etc.), see the advanced API.
+
 \subsubsection{orgfxplus\_init}
-\textbf{Description:} Initializes the screen with the supplied video mode and returns an id for the screen.
+\textbf{Description:} Initializes the screen with the supplied video mode and returns an id for the screen. The only supported bpp is 16. Double buffering and depth buffering can be enabled (and the appropriate buffers will be allocated). The depth buffer is allocated with the same size as the screen. There is no support in the driver to allocate more than one depth buffer.
 \begin{lstlisting}
 int orgfxplus_init(unsigned int width,
                    unsigned int height,
                    unsigned char bpp,
-                   unsigned char doubleBuffering);
+                   unsigned char doubleBuffering,
+                   unsigned char zbuffer);
 \end{lstlisting}
 
 \subsubsection{orgfxplus\_init\_surface}
@@ -847,6 +914,12 @@ int orgfxplus_init_surface(unsigned int width,
 \textbf{Description:} Binds a surface as the current render target.
 \begin{lstlisting}
 void orgfxplus_bind_rendertarget(int surface);
+\end{lstlisting}
+
+\subsubsection{orgfxplus\_bind\_tex0}
+\textbf{Description:} Binds a surface as the current active texture.
+\begin{lstlisting}
+void orgfxplus_bind_tex0(int surface);
 \end{lstlisting}
 
 \subsubsection{orgfxplus\_flip}
@@ -868,62 +941,49 @@ inline void orgfxplus_clip(unsigned int x0,
 \subsubsection{orgfxplus\_fill}
 \textbf{Description:} Draws a rectangle to the current render target with a flat color.
 \begin{lstlisting}
-void orgfxplus_fill(unsigned int x0,
-                    unsigned int y0,
-                    unsigned int x1,
-                    unsigned int y1,
+void orgfxplus_fill(int x0, int y0,
+                    int x1, int y1,
                     unsigned int color);
 \end{lstlisting}
 
 \subsubsection{orgfxplus\_line}
 \textbf{Description:} Draws a line from (x0,y0) to (x1,y1) to the current render target with a flat color.
 \begin{lstlisting}
-void orgfxplus_line(unsigned int x0,
-                    unsigned int y0,
-                    unsigned int x1,
-                    unsigned int y1,
+void orgfxplus_line(int x0, int y0,
+                    int x1, int y1,
                     unsigned int color);
 \end{lstlisting}
 
 \subsubsection{orgfxplus\_triangle}
 \textbf{Description:} Draws a triangle between the points (x0,y0),(x1,y1) and (x2,y2) and fills it with a color.
 \begin{lstlisting}
-void orgfxplus_triangle(unsigned int x0, 
-                        unsigned int y0, 
-                        unsigned int x1, 
-                        unsigned int y1, 
-                        unsigned int x2, 
-                        unsigned int y2, 
+void orgfxplus_triangle(int x0, int y0, 
+                        int x1, int y1, 
+                        int x2, int y2, 
                         unsigned int color);
 \end{lstlisting}
 
 \subsubsection{orgfxplus\_curve}
-\textbf{Description:} Draws a quadratic bézier curve from (x0,y0) to (x3,y3) with the control points (x1,y1) and (x2,y2). 
+\textbf{Description:} Draws a quadratic B\'{e}zier curve from (x0,y0) to (x2,y2) with the control point (x1,y1). Uses flat coloring. 
 \begin{lstlisting}
-void orgfxplus_curve(unsigned int x0, 
-                     unsigned int y0, 
-                     unsigned int x1, 
-                     unsigned int y1, 
-                     unsigned int x2, 
-                     unsigned int y2, 
-                     unsigned int x3, 
-                     unsigned int y3, 
+void orgfxplus_curve(int x0, int y0, 
+                     int x1, int y1, 
+                     int x2, int y2,
+                     unsigned int inside,
                      unsigned int color);
 \end{lstlisting}
 
 \subsubsection{orgfxplus\_draw\_surface}
 \textbf{Description:} Draws a texture to the current render target.
 \begin{lstlisting}
-void orgfxplus_draw_surface(unsigned int x0,
-                            unsigned int y0,
+void orgfxplus_draw_surface(int x0, int y0,
                             unsigned int surface);
 \end{lstlisting}
 
 \subsubsection{orgfxplus\_draw\_surface\_section}
 \textbf{Description:} Draws a section of a texture defined by src0, src1 to the current render target.
 \begin{lstlisting}
-void orgfxplus_draw_surface_section(unsigned int x0,
-                                    unsigned int y0,
+void orgfxplus_draw_surface_section(int x0, int y0,
                                     unsigned int srcx0,
                                     unsigned int srcy0,
                                     unsigned int srcx1,
@@ -947,9 +1007,10 @@ void orgfxplus_alpha(unsigned int alpha,
 \end{lstlisting}
 
 \subsection{Bitmap Fonts}
+Note that bitmap fonts can be generated with the bitfontmaker utility. This utility generates an initialization function that calls the \textbf{orgfx\_make\_bitmap\_font} function and returns a valid font.
 
 \subsubsection{orgfx\_make\_bitmap\_font}
-Creates a orgfx\_bitmap\_font from a image. glyphSpacing space between two glyphs in the string and spaceWidth is the size of the space character.
+Creates a orgfx\_bitmap\_font from a image. \textit{glyphSpacing} is the space in pixels between two glyphs in the string, and \textit{spaceWidth} is the size of the space character.
 \begin{lstlisting}
 orgfx_bitmap_font orgfx_make_bitmap_font(orgfx_tileset* glyphs,
                                          unsigned int glyphSpacing,
@@ -957,42 +1018,149 @@ orgfx_bitmap_font orgfx_make_bitmap_font(orgfx_tileset* glyphs,
 \end{lstlisting}
 
 \subsubsection{orgfx\_put\_text}
-Puts the text "str" on the screen with the specified "font" on position x0,y0.
+Puts the text "str" on the screen with the specified "font" on position x0,y0. 
 \begin{lstlisting}
 void orgfx_put_text(orgfx_font* font,
-                    unsigned int x0, unsigned int y0,
-                    const char *str);
+                    int x0, int y0,
+                    const wchar_t *str);
+\end{lstlisting}
+
+Note the use of wide strings (which enables the use of special characters such as \aa \"{a}\"{o}). Example usage:
+
+\begin{lstlisting}
+orgfx_put_text(&font, x0, y0,
+               L"Some example text");
 \end{lstlisting}
 
 \subsection{Vector Fonts}
+Note that vector fonts can be generated with the fonter utility. This utility generates an initialization function that calls the \textbf{orgfx\_make\_vector\_font} and \textbf{orgfx\_init\_vector\_font} functions and returns a valid font.
+
+\subsubsection{orgfx\_make\_vector\_font}
+Creates a orgfx\_vector\_font from a series of glyphs.
+\begin{lstlisting}
+orgfx_vector_font orgfx_make_vector_font(Glyph *glyphlist,
+                                         int size,
+                                         Glyph **glyphindexlist,
+                                         int glyphindexlistsize)
+\end{lstlisting}
+
+\subsubsection{orgfx\_init\_vector\_font}
+Initializes the font for use. Needs to be called to set the index list.
+\begin{lstlisting}
+int  orgfx_init_vector_font(orgfx_vector_font font);
+\end{lstlisting}
+
+\subsubsection{orgfx\_put\_vector\_text}
+\textbf{CURRENTLY UNDER REVISION}
+
+
+\subsection{3D API}
+There are two major parts of the 3D API, one is the transformation matrix interface and the other is the 3D mesh interface.
+
+\subsubsection{Transformations}
+By setting the transformation matrix the ORGFX core can perform hardware accelerated transformations for every point sent to it, causing significantly less overhead than if this was done in software.
+
+The relevant functions are listed below:
+
+\begin{lstlisting}
+orgfx_matrix orgfx3d_identity(void);
+orgfx_matrix orgfx3d_rotateX(orgfx_matrix mat, float rad);
+orgfx_matrix orgfx3d_rotateY(orgfx_matrix mat, float rad);
+orgfx_matrix orgfx3d_rotateZ(orgfx_matrix mat, float rad);
+orgfx_matrix orgfx3d_scale(orgfx_matrix mat, orgfx_point3 s);
+orgfx_matrix orgfx3d_translate(orgfx_matrix mat, orgfx_point3 t);
+
+inline void orgfx3d_set_matrix(orgfx_matrix mat);
+\end{lstlisting}
+
+\subsubsection{orgfx3d\_make\_mesh}
+Initializes a mesh with the necessary arrays generated by the meshmaker utility.
+
+\begin{lstlisting}
+orgfx_mesh orgfx3d_make_mesh(orgfx_face* faces,
+                             unsigned int nFaces,
+                             orgfx_point3* verts,
+                             unsigned int nVerts,
+                             orgfx_point2* uvs,
+                             unsigned int nUvs);
+\end{lstlisting}
+
+\subsubsection{orgfx3d\_mesh\_texture\_size}
+This should be called \textit{only once} for each mesh that will be using texture coordinates. Since the ORGFX device uses pixel coordinates the UV coordinates must be updated with the size of the used texture.
+
+\begin{lstlisting}
+void orgfx3d_mesh_texture_size(orgfx_mesh* mesh,
+                               unsigned int width,
+                               unsigned int height);
+\end{lstlisting}
+
+\subsubsection{orgfx3d\_draw\_mesh}
+This function draws the mesh to screen, using the \textit{translation}, \textit{rotation} and \textit{scale} vectors stored in the mesh structure. If \textit{filled} is set to zero, the mesh will be drawn as a colored wireframe. If \textit{filled} is set to one and \textit{textured} to zero, the mesh will be drawn with interpolated colors (the mesh format currently does not support materials). If \textit{filled} is set to one and \textit{textured} is also set to one, the mesh will be textured using interpolated uv texture coordinates.
+
+\begin{lstlisting}
+void orgfx3d_draw_mesh(orgfx_mesh* mesh,
+                       int filled, int textured);
+\end{lstlisting}
 
 \subsection{Linux}
 The current version of the core does not have a Linux driver.
 
+\subsection{Software emulation}
+The entire device has a software implementation to make it easier to write applications for the device. The \textbf{orgfx\_sw.c} file replaces the \textbf{orgfx.c} and \textbf{orgfx\_plus.c} files, and renders pixels as they would be rendered by the graphics accelerator, but on a PC. The software implementation uses SDL as the backend.
+
 \subsection{Utilities}
-\subsubsection{Sprite Maker}
-Since there is no libraries for loading images in the bare metal driver, a utility program is provided that converts an image into a format that can be loaded to the graphics accelerator. The Sprite Maker utility uses SDL and SDL\_image to load images, and supports loading several basic formats, such as bmp, jpg, png, gif etc. The utility supports writing to 8-, 16-, 24- and 32-bits-per-pixel (must match the format set by orgfx\_set\_videomode). The width of the loaded image must be a multiple of 4 pixels (8 bpp), 2 pixels (16 bpp) or 1 bpp (24, 32 bpp) respectively.
+\subsubsection{Sprite maker utility}
+\label{sec:spritemaker}
+A small application that converts an image into a header file that can be included in the project when compiled. The application generates an array of color values that can be loaded as a sprite.
 
-The resulting output of the utility is a header file that can be included into your program. This header declares an array, which can be copied to memory and be used as a texture.
+The application has support for reading common image file formats such as bmp, png and jpg (for a full list, see the supported file formats of the SDL\_image libaray). 8- 16- and 32-bit output is supported, and can be changed by passing a command line argument to the program (by default, the output is adjusted for 16 bit color mode).
 
-This is sample shows how the converter utility can be used:
+The resulting output header file, which is named after the input, can be included in a program using the extended bare metal driver. The easiest way to use the sprite is to use the generated initialize function defined in the header file.
 
-\begin{lstlisting}
-./spritemaker image.png [bpp]
-\end{lstlisting}
+\subsubsection{Bitmap font maker utility}
+\label{sec:bitmapfontmaker}
+Another application generates the data structures necessary to load bitmap fonts with very little effort. It takes an image and a grid spacing as input, and automatically generates offsets for all the glyphs in the font. The font generated by the program has 256 characters arranged according to the ASCII charset, as seen in figure \ref{fig:ascii} and \ref{fig:ascii2}.
 
-If bpp is not provided, the utility uses 8 bits-per-pixel. For an example of how to use the output of the converter, see section \ref{sec:examples}.
+\begin{figure}
+\begin{center}
+\includegraphics[scale=0.6]{../pictures/ascii}
+\caption{The ASCII table. Each number from 0 to 127 refers to a character. The numbers 0 to 31 cannot be printed.}
+\label{fig:ascii}
+\end{center}
+\end{figure}
 
-\subsubsection{Mesh Maker}
-Similar to the image loading utility, there is a simple program that converts Maya obj files into a mesh format that is easy to load into the bare metal driver.
+\begin{figure}
+\begin{center}
+\includegraphics[scale=0.6]{../pictures/ascii2}
+\caption{The extended ASCII table. Each number from 128 to 255 refers to a character, mostly special characters not included in the basic table.}
+\label{fig:ascii2}
+\end{center}
+\end{figure}
 
-\textbf{WRITE MORE}
-\subsubsection{Fonter}
-The fonter is a application that converts a ttf file into a .h file that can be included in the project. if no input is given the application tries to open font.ttf and convert it to font.h.
+The application has support for reading common image file formats such as bmp, png and jpg (for a full list, see the supported file formats of the SDL\_image libaray). 8- 16- and 32-bit output is supported, and can be changed by passing a command line argument to the program (by default, the output is adjusted for 16 bit color mode). Both vertical and horizontal grid spacing are set to 32 pixels by default, but this can be changed through command line arguments.
 
-\begin{lstlisting}
-./fonter [fontname.ttf] [output.h]
-\end{lstlisting}
+The resulting output header file, which is named after the input, can be included in a program using the bare metal and font driver. The easiest way to use the bitmap font is to use the generated initialize function defined in the header file.
+
+\subsubsection{Mesh maker utility}
+\label{sec:meshmaker}
+The mesh maker utility loads 3D objects and generates a header file that can be used by the advanced 3D API. Currently the utility only supports Wavefront .obj files which only contains 3rd order polygons. Any higher order polygons will be discarded, so all polygons in the model must be converted to triangles prior to running the utility.
+
+The application supports loading texture coordinates for each vertex, allowing for textured meshes.
+
+The resulting output header file, which is named after the input, can be included in a program using the bare metal 3D API. The easiest way to use the mesh is to use the generated initialize function defined in the header file.
+
+\subsubsection{Vector font maker utility}
+\label{sec:fontmaker}
+The Font maker is a application that can convert a .ttf file to a format that the graphics card can handle. The Font maker outputs a .h file that can be included in a project to enable the graphics accelerators vector font capabilities. The converter finds all explicit vector points in a ttf file and then calculates the implicit points. At the same time it checks where the glyphs contours ends, the points is then sent to a Delaunay triangulation function based on the work of V. Domiter and B. Zalik and implemented by M. Green and T. \AA hl\'{e}n \footnote{http://code.google.com/p/poly2tri/}. The generated .h file consists of two fields for each glyph, one field for B\'{e}zier writes and one for triangle writes. The generated header file will contain two lists for each glyph, one to store B\'{e}zier writes and one to store triangle writes. The rendered result can be seen in figure \ref{fig:orsocgfxfont}.
+
+\begin{figure}
+\begin{center}
+\includegraphics[scale=0.6]{../pictures/orsocgfxfont}
+\caption{A font rendered by the software implementation of the ORGFX. B\'{e}zier curves are single colored while the triangles are interpolated between current color and black}
+\label{fig:orsocgfxfont}
+\end{center}
+\end{figure}
+
 
 \subsubsection{Regger}
 The regger is a application that keeps track of what register addresses is set in the RTL code and in the drivers.
@@ -1040,5 +1208,7 @@ int main(void)
     while(1);
 }
 \end{lstlisting}
+
+More example programs are supplied with the implementation in the \textbf{sw/examples} directory.
 
 \end{document}
