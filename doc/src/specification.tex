@@ -1050,9 +1050,22 @@ Initializes the font for use. Needs to be called to set the index list.
 int  orgfx_init_vector_font(orgfx_vector_font font);
 \end{lstlisting}
 
-\subsubsection{orgfx\_put\_vector\_text}
-\textbf{CURRENTLY UNDER REVISION}
+\subsubsection{orgfx\_put\_vector\_char}
+Prints one glyph from the font with the current transformation matrix. If the glyph is not supported in the font the function will return without doing anything.
+\begin{lstlisting}
+void orgfx_put_vector_char(orgfx_vector_font* font, wchar_t text);
+\end{lstlisting}
 
+\subsubsection{orgfx\_put\_vector\_text}
+Prints a string of characters using a vector font. This function sets the transformation matrix from the \textit{offset}, \textit{scale} and \textit{rotation} parameters, then makes a series of calls to \textbf{orgfx\_put\_vector\_char}.
+\begin{lstlisting}
+void orgfx_put_vector_text(orgfx_vector_font* font,
+                           orgfx_point3 offset,
+                           orgfx_point3 scale,
+                           orgfx_point3 rotation,
+                           const wchar_t *str,
+                           unsigned int color);
+\end{lstlisting}
 
 \subsection{3D API}
 There are two major parts of the 3D API, one is the transformation matrix interface and the other is the 3D mesh interface.

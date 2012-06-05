@@ -35,11 +35,18 @@ typedef struct orgfx_vector_font{
     Glyph *glyph;
 } orgfx_vector_font;
 
-orgfx_vector_font orgfx_make_vector_font(Glyph *glyphlist, int size, Glyph **glyphindexlist, int glyphindexlistsize);
+orgfx_vector_font orgfx_make_vector_font(Glyph *glyphlist,
+                                         int size,
+                                         Glyph **glyphindexlist,
+                                         int glyphindexlistsize);
 int  orgfx_init_vector_font(orgfx_vector_font font);
 
-
-void orgfx_vf_write(orgfx_vector_font* font, const wchar_t *text, int xoffset, int yoffset, int color);
-void orgfx_vf_write_char(orgfx_vector_font* font, wchar_t text, int xoffset, int yoffset, float scale);
+void orgfx_put_vector_char(orgfx_vector_font* font, wchar_t text);
+void orgfx_put_vector_text(orgfx_vector_font* font,
+                           orgfx_point3 offset,
+                           orgfx_point3 scale,
+                           orgfx_point3 rotation,
+                           const wchar_t *str,
+                           unsigned int color);
 
 #endif

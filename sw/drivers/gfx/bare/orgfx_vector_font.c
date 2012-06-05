@@ -5,7 +5,10 @@
 
 #include <stdio.h>
 
-orgfx_vector_font orgfx_make_vector_font(Glyph *glyphlist,int size, Glyph **glyphindexlist, int glyphindexlistsize)
+orgfx_vector_font orgfx_make_vector_font(Glyph *glyphlist,
+                                         int size,
+                                         Glyph **glyphindexlist,
+                                         int glyphindexlistsize)
 {
     orgfx_vector_font font;
     font.size = size;
@@ -41,61 +44,72 @@ int orgfx_init_vector_font(orgfx_vector_font font)
     return 0;
 }
 
-void orgfx_vf_write(orgfx_vector_font* glyph, const wchar_t *text, int xoffset, int yoffset, int color)
+void orgfx_put_vector_text(orgfx_vector_font* font,
+                           orgfx_point3 offset,
+                           orgfx_point3 scale,
+                           orgfx_point3 rotation,
+                           const wchar_t *str,
+                           unsigned int color)
 {
-    int i,j;
-    int width = 35;
-    float scale = 0.05;
-    yoffset += width*1.5;
+    int advance = 0;
+    size_t cIndex = 0;
 
     orgfx_enable_tex0(0);
     orgfx_set_colors(color,color,color);
-    i = 0;
+    orgfx_enable_transform(1);
 
     while(1)
     {
-        wchar_t c = text[i++];
+        wchar_t c = str[cIndex++];
         // Break if we reach the end of the string
         if(c == 0)
             break;
 
-        if(c != ' ')
-            orgfx_vf_write_char(glyph,c, xoffset, yoffset, scale);
-        else
-            xoffset += 20;
+        // Set the transformation matrix
+        orgfx_point3 glyph_offset = {advance,0,0};
+        orgfx_matrix m = orgfx3d_identity();
 
-        if(glyph->index_list[c])
-            xoffset += glyph->index_list[c]->advance_x*scale;
+        m = orgfx3d_rotateX(m, -2*rotation.x);
+        m = orgfx3d_rotateY(m, -2*rotation.y);
+        m = orgfx3d_rotateZ(m, -2*rotation.z);
+        m = orgfx3d_translate(m, glyph_offset);
+        m = orgfx3d_rotateX(m, rotation.x);
+        m = orgfx3d_rotateY(m, rotation.y);
+        m = orgfx3d_rotateZ(m, rotation.z);
+        m = orgfx3d_scale(m, scale);
+        m = orgfx3d_translate(m, offset);
+        orgfx3d_set_matrix(m);
+
+        if(c != ' ')
+            orgfx_put_vector_char(font, c);
+        else
+            advance += 400;
+
+        if(font->index_list[c])
+            advance += font->index_list[c]->advance_x;
     }
+    orgfx_enable_transform(0);
 }
 
-void orgfx_vf_write_char(orgfx_vector_font* glyph, wchar_t text, int xoffset, int yoffset, float scale)
+void orgfx_put_vector_char(orgfx_vector_font* font, wchar_t text)
 {
-    if(glyph->index_list[text] == 0)
+    Glyph* glyph = font->index_list[text];
+    if(glyph == 0)
         return;
-
     int i;
-    orgfx_point3 scaled = {scale,scale,scale};
-    orgfx_point3 translate = {xoffset,yoffset,0};
-    orgfx_enable_transform(1);
-    orgfx_matrix m = orgfx3d_identity();
-    m = orgfx3d_scale(m, scaled);
-    m = orgfx3d_translate(m, translate);
-    orgfx3d_set_matrix(m);
 
-    for(i=0; i<glyph->index_list[text]->triangle_n_writes; i++)
+    for(i=0; i<glyph->triangle_n_writes; i++)
     {
-        orgfx_triangle((glyph->index_list[text]->triangle[i].p0.x)*FIXEDW,(glyph->index_list[text]->triangle[i].p0.y)*FIXEDW,
-                       (glyph->index_list[text]->triangle[i].p1.x)*FIXEDW,(glyph->index_list[text]->triangle[i].p1.y)*FIXEDW,
-                       (glyph->index_list[text]->triangle[i].p2.x)*FIXEDW,(glyph->index_list[text]->triangle[i].p2.y)*FIXEDW, 1);
+        orgfx_triangle((glyph->triangle[i].p0.x)*FIXEDW,(glyph->triangle[i].p0.y)*FIXEDW,
+                       (glyph->triangle[i].p1.x)*FIXEDW,(glyph->triangle[i].p1.y)*FIXEDW,
+                       (glyph->triangle[i].p2.x)*FIXEDW,(glyph->triangle[i].p2.y)*FIXEDW,
+                        1);
     }
-    for(i=0; i<glyph->index_list[text]->bezier_n_writes; i++)
+    for(i=0; i<glyph->bezier_n_writes; i++)
     {
-        orgfx_curve((glyph->index_list[text]->bezier[i].start.x)*FIXEDW, (glyph->index_list[text]->bezier[i].start.y)*FIXEDW,
-                    (glyph->index_list[text]->bezier[i].control.x)*FIXEDW, (glyph->index_list[text]->bezier[i].control.y)*FIXEDW,
-                    (glyph->index_list[text]->bezier[i].end.x)*FIXEDW, (glyph->index_list[text]->bezier[i].end.y)*FIXEDW,
-                    glyph->index_list[text]->bezier[i].fillInside);
+        orgfx_curve((glyph->bezier[i].start.x)  *FIXEDW, (glyph->bezier[i].start.y)  *FIXEDW,
+                    (glyph->bezier[i].control.x)*FIXEDW, (glyph->bezier[i].control.y)*FIXEDW,
+                    (glyph->bezier[i].end.x)    *FIXEDW, (glyph->bezier[i].end.y)    *FIXEDW,
+                     glyph->bezier[i].fillInside);
     }
-
-    orgfx_enable_transform(0);
 }
