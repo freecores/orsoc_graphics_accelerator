@@ -197,25 +197,21 @@ int main(void)
         }
         case STATE_3D:
         {
-            orgfx_point3 offset = {200, 500, 0};
+            orgfx_point3 translation = {200, 500, 0};
+            orgfx_point3 rotation = {-1.5,0,rad};
             orgfx_point3 scale = {25.0, 25.0, 25.0};
-            orgfx_point3 rot = {-1.5,0,rad};
 
-            mesh.scale = scale;
-            mesh.translation = offset;
-            mesh.rotation = rot;
-
-            orgfx3d_draw_mesh(&mesh, 0, 0);
+            orgfx3d_draw_mesh(&mesh, translation, rotation, scale, 0, 0);
 
             orgfx_clear_zbuffer();
             for(i = 0; i < 1500000; ++i);
 
             orgfx_enable_zbuffer(1);
 
-            mesh.translation.x += 300;
-            mesh.rotation.z = -rad;
+            translation.x += 300;
+            rotation.z = -rad;
 
-            orgfx3d_draw_mesh(&mesh, 1, 0);
+            orgfx3d_draw_mesh(&mesh, translation, rotation, scale, 1, 0);
 
             orgfx_enable_zbuffer(0);
             break;

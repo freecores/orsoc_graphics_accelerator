@@ -22,13 +22,13 @@ vgatest.bin:
 	or32-elf-gcc -o vgatest vgatest.c
 	or32-elf-objcopy -O binary vgatest
 	bin2binsizeword vgatest vgatest.bin
-	mv vgatest.bin ../../../../orpsocv2/boards/xilinx/atlys/backend/par/run/	
+	mv vgatest.bin ../../../../../../ORGFXSoC/orpsocv2/boards/xilinx/atlys/backend/par/run/	
 
 drivertest.bin:
 	or32-elf-gcc -o drivertest drivertest.c $(INCLUDE) $(HW_SRC)
 	or32-elf-objcopy -O binary drivertest
 	bin2binsizeword drivertest drivertest.bin
-	mv drivertest.bin ../../../../orpsocv2/boards/xilinx/atlys/backend/par/run/
+	mv drivertest.bin ../../../../../../ORGFXSoC/orpsocv2/boards/xilinx/atlys/backend/par/run/
 
 drivertest:
 	gcc -o drivertest drivertest.c $(INCLUDE) $(SW_SRC) $(SDL)
@@ -37,7 +37,7 @@ plustest.bin:
 	or32-elf-gcc -o plustest plustest.c $(INCLUDE) $(HW_SRC)
 	or32-elf-objcopy -O binary plustest
 	bin2binsizeword plustest plustest.bin
-	mv plustest.bin ../../../../orpsocv2/boards/xilinx/atlys/backend/par/run/
+	mv plustest.bin ../../../../../../ORGFXSoC/orpsocv2/boards/xilinx/atlys/backend/par/run/
 
 plustest:
 	gcc -o plustest plustest.c $(INCLUDE) $(SW_SRC) $(SDL)
@@ -51,8 +51,8 @@ plustest:
 ocgfxmesh.bin:
 	or32-elf-gcc -o ocgfxmesh ocgfxmesh.c $(INCLUDE) $(HW_SRC) $(3D_SRC) $(TILE_SRC) $(FONT_SRC) $(VFONT_SRC) -lm
 	or32-elf-objcopy -O binary ocgfxmesh
-	bin2binsizeword ocgfxmesh ocgfxmesh.bin
-	mv ocgfxmesh.bin ../../../../orpsocv2/boards/xilinx/atlys/backend/par/run/
+	./bin2binsizeword ocgfxmesh ocgfxmesh.bin
+	mv ocgfxmesh.bin ../../../../../../ORGFXSoC/orpsocv2/boards/xilinx/atlys/backend/par/run/
 
 ocgfxmesh:
 	gcc -o ocgfxmesh ocgfxmesh.c $(INCLUDE) $(SW_SRC) $(3D_SRC) $(TILE_SRC) $(FONT_SRC) $(VFONT_SRC) $(SDL)
@@ -61,7 +61,7 @@ demo.bin:
 	or32-elf-gcc -o demo demo.c $(INCLUDE) $(HW_SRC) $(3D_SRC) $(TILE_SRC) $(FONT_SRC) -lm
 	or32-elf-objcopy -O binary demo
 	bin2binsizeword demo demo.bin
-	mv demo.bin ../../../../orpsocv2/boards/xilinx/atlys/backend/par/run/
+	mv demo.bin ../../../../../../ORGFXSoC/orpsocv2/boards/xilinx/atlys/backend/par/run/
 
 demo:
 	gcc -o demo demo.c $(INCLUDE) $(SW_SRC) $(3D_SRC) $(TILE_SRC) $(FONT_SRC) $(SDL)
